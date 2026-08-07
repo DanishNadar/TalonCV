@@ -1,0 +1,2 @@
+-- The production app ships sample interview questions in web/lib/sampleQuestions.ts.
+-- User-owned interview data is intentionally never seeded.

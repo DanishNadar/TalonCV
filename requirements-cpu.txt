@@ -1,0 +1,17 @@
+av>=17,<18
+fastapi>=0.116,<1
+faster-whisper>=1.2,<2
+huggingface_hub[cli]>=1.2,<2
+joblib>=1.4
+llama-cpp-python>=0.3,<1
+mediapipe==0.10.21
+numpy>=1.26,<2
+opencv-python-headless>=4.10,<5
+pandas>=2.2,<3
+psutil>=6,<8
+scikit-learn>=1.5,<2
+supabase>=2.18,<3
+tqdm>=4.66,<5
+transformers>=4.51,<6
+ultralytics>=8.3,<9
+uvicorn[standard]>=0.35,<1

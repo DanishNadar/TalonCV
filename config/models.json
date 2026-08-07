@@ -1,0 +1,33 @@
+{
+  "runtime": {
+    "networkingDisabled": true,
+    "minimumFreeDiskGb": 6
+  },
+  "transcription": {
+    "path": "models/faster-whisper-small.en",
+    "device": "auto",
+    "computeTypeCpu": "int8",
+    "computeTypeCuda": "float16",
+    "beamSize": 5
+  },
+  "faceDetection": {
+    "path": "models/yolo11n-face/model.pt",
+    "device": "cpu",
+    "imageSize": 640,
+    "confidenceFloor": 0.05,
+    "analysisFps": 3
+  },
+  "semanticAnalysis": {
+    "path": "models/all-MiniLM-L6-v2",
+    "device": "auto",
+    "maxSequenceLength": 256
+  },
+  "localCoach": {
+    "enabled": true,
+    "path": "models/qwen2.5-1.5b-instruct",
+    "device": "auto",
+    "maxInputTokens": 768,
+    "maxNewTokens": 320,
+    "repetitionPenalty": 1.05
+  }
+}

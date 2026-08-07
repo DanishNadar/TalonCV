@@ -1,0 +1,49 @@
+import { browserAnalysisVersion, browserModels } from "@/config/browser-models";
+import { buildDeterministicReport } from "./multimodal/reportBuilder";
+import { alignMultimodalEvents } from "./multimodal/alignment";
+import { buildCoachingScores } from "./multimodal/scoring";
+import { decodeAudio } from "./audio/audioAnalyzer";
+import type { LocalAnalysis, LocalSession, TranscriptArtifact } from "@/types/local";
+import type { WorkerRequest, WorkerResponse } from "./workerProtocol";
+
+export interface AnalysisProgress { stage: string; progress: number; message: string; modelId?: string; loadedBytes?: number; totalBytes?: number; }
+export interface AnalysisOptions { provider: "wasm" | "webgpu"; profile: "fast" | "balanced"; visualFps: number; testTranscript?: TranscriptArtifact; }
+export interface AnalysisController { promise: Promise<LocalAnalysis>; cancel: () => void; }
+const unavailableTranscript = (warning: string): TranscriptArtifact => ({ available: false, text: "", segments: [], averageConfidence: null, warnings: [warning] });
+
+function waitForMedia(video: HTMLVideoElement, event: "loadedmetadata" | "seeked"): Promise<void> { return new Promise((resolve, reject) => { const done = () => { cleanup(); resolve(); }; const fail = () => { cleanup(); reject(new Error("The selected video could not be decoded by this browser.")); }; const cleanup = () => { video.removeEventListener(event, done); video.removeEventListener("error", fail); }; video.addEventListener(event, done, { once: true }); video.addEventListener("error", fail, { once: true }); }); }
+
+async function analyzeVision(blob: Blob, durationSeconds: number, options: AnalysisOptions, onProgress: (progress: AnalysisProgress) => void, cancelled: () => boolean): Promise<{ rows: Array<Record<string, unknown>>; events: LocalAnalysis["visualEvents"] }> {
+  const worker = new Worker(new URL("../../workers/vision.worker.ts", import.meta.url)); const request = (payload: WorkerRequest["payload"], expect: "ready" | "progress" | "result", transfer?: Transferable[]) => new Promise<unknown>((resolve, reject) => { const requestId = crypto.randomUUID(); const listener = (event: MessageEvent<WorkerResponse>) => { const response = event.data; if (response.type === "progress" && response.progress) onProgress(response.progress); if (response.requestId === requestId && response.type === expect) { worker.removeEventListener("message", listener); resolve(response.payload); } if (response.requestId === requestId && response.type === "error") { worker.removeEventListener("message", listener); reject(new Error(response.error)); } }; worker.addEventListener("message", listener); worker.postMessage({ type: "analyze", requestId, payload } satisfies WorkerRequest, transfer || []); });
+  const url = URL.createObjectURL(blob); const video = document.createElement("video"); video.muted = true; video.playsInline = true; video.preload = "auto"; video.src = url;
+  try {
+    await waitForMedia(video, "loadedmetadata"); await request({ action: "start" }, "ready"); const frames = Math.max(1, Math.floor(durationSeconds * options.visualFps) + 1);
+    for (let index = 0; index < frames; index += 1) { if (cancelled()) { worker.postMessage({ type: "cancel" } satisfies WorkerRequest); throw new Error("Analysis cancelled."); } const timestampSeconds = Math.min(durationSeconds, index / options.visualFps); video.currentTime = timestampSeconds; await waitForMedia(video, "seeked"); const bitmap = await createImageBitmap(video); await request({ action: "frame", frame: bitmap, timestampSeconds, totalFrames: frames }, "progress", [bitmap]); }
+    return await request({ action: "finish", durationSeconds }, "result") as { rows: Array<Record<string, unknown>>; events: LocalAnalysis["visualEvents"] };
+  } finally { worker.terminate(); video.removeAttribute("src"); video.load(); URL.revokeObjectURL(url); }
+}
+
+async function analyzeAudioAndLanguage(samples: Float32Array, sampleRate: number, channels: number, session: LocalSession, options: AnalysisOptions, onProgress: (progress: AnalysisProgress) => void, cancelled: () => boolean) {
+  const worker = new Worker(new URL("../../workers/analysis.worker.ts", import.meta.url)); const requestId = crypto.randomUUID();
+  try { return await new Promise<{ transcript: TranscriptArtifact; audioFeatures: Record<string, unknown>; audioEvents: LocalAnalysis["audioEvents"]; semanticAnalysis: Record<string, unknown>; responseAnalysis: Record<string, unknown> }>((resolve, reject) => { const interval = window.setInterval(() => { if (cancelled()) { worker.postMessage({ type: "cancel" } satisfies WorkerRequest); window.clearInterval(interval); } }, 100); const done = <T,>(callback: (value: T) => void, value: T) => { window.clearInterval(interval); callback(value); }; worker.onmessage = (event: MessageEvent<WorkerResponse>) => { const response = event.data; if (response.type === "progress" && response.progress) onProgress(response.progress); if (response.type === "result" && response.requestId === requestId) done(resolve, response.payload as { transcript: TranscriptArtifact; audioFeatures: Record<string, unknown>; audioEvents: LocalAnalysis["audioEvents"]; semanticAnalysis: Record<string, unknown>; responseAnalysis: Record<string, unknown> }); if (response.type === "error" && response.requestId === requestId) { window.clearInterval(interval); reject(new Error(response.error)); } }; const transfer = new Float32Array(samples).buffer; worker.postMessage({ type: "analyze", requestId, payload: { samples: transfer, sampleRate, channels, context: session.context, provider: options.provider, profile: options.profile, testTranscript: options.testTranscript }, mode: options.provider === "webgpu" ? "webgpu" : "cpu" } satisfies WorkerRequest, [transfer]); }); }
+  finally { worker.terminate(); }
+}
+
+export function createLocalAnalysis(session: LocalSession, recording: Blob, options: AnalysisOptions, onProgress: (progress: AnalysisProgress) => void): AnalysisController {
+  let isCancelled = false;
+  const promise = (async (): Promise<LocalAnalysis> => {
+    onProgress({ stage: "preparingMedia", progress: 2, message: "Preparing recording locally" }); let hasAudio = recording.type.startsWith("audio/") || recording.type.startsWith("video/"); const hasVideo = recording.type.startsWith("video/"); let durationSeconds = session.recording?.durationSeconds || 0;
+    let transcript = unavailableTranscript("No usable audio was available."); let audioFeatures: Record<string, unknown> = { available: false, warnings: ["No decoded audio was available."] }; let audioEvents: LocalAnalysis["audioEvents"] = []; let semanticAnalysis: Record<string, unknown> = { available: false, warnings: ["No transcript was available for semantic analysis."] }; let responseAnalysis: Record<string, unknown> = { available: false, practiceAreas: ["Record an audible answer so TalonCV can provide transcript-based coaching."] }; const warnings: string[] = [];
+    if (hasAudio) {
+      try { const audio = await decodeAudio(recording); durationSeconds = durationSeconds || audio.durationSeconds; if (isCancelled) throw new Error("Analysis cancelled."); const result = await analyzeAudioAndLanguage(audio.samples, audio.sampleRate, audio.channels, session, options, onProgress, () => isCancelled); ({ transcript, audioFeatures, audioEvents, semanticAnalysis, responseAnalysis } = result); }
+      catch (error) { if (isCancelled) throw error; hasAudio = false; const warning = error instanceof Error ? error.message : "Audio decoding failed."; warnings.push(warning); transcript = unavailableTranscript(warning); audioFeatures = { available: false, warnings: [warning] }; }
+    }
+    let visualFeatures: Array<Record<string, unknown>> = []; let visualEvents: LocalAnalysis["visualEvents"] = [];
+    if (hasVideo) {
+      try { onProgress({ stage: "analyzingVisual", progress: 58, message: "Preparing sampled visual analysis" }); const visual = await analyzeVision(recording, durationSeconds, options, (item) => onProgress({ ...item, progress: 58 + Math.round((item.progress || 0) * 0.22) }), () => isCancelled); visualFeatures = visual.rows; visualEvents = visual.events; }
+      catch (error) { if (isCancelled) throw error; warnings.push(error instanceof Error ? error.message : "Visual analysis failed."); }
+    }
+    if (isCancelled) throw new Error("Analysis cancelled."); onProgress({ stage: "aligningEvidence", progress: 84, message: "Aligning local evidence" }); const moments = alignMultimodalEvents(transcript, responseAnalysis, audioEvents, visualEvents); onProgress({ stage: "calculatingScores", progress: 90, message: "Calculating explainable scores" }); const scores = buildCoachingScores({ hasAudio, hasVideo }, audioFeatures, audioEvents, responseAnalysis, visualEvents, moments); const partial = { analysisVersion: browserAnalysisVersion, createdAt: new Date().toISOString(), mediaInfo: { durationSeconds, hasAudio, hasVideo, mimeType: recording.type || "application/octet-stream" }, sessionContext: session.context, transcript, responseAnalysis, semanticAnalysis, audioFeatures, audioEvents, visualFeatures, visualEvents, moments, scores, localCoaching: { available: false }, modelVersions: { speech: options.profile === "balanced" ? `${browserModels.speechBalanced.model}@${browserModels.speechBalanced.revision}` : `${browserModels.speechFast.model}@${browserModels.speechFast.revision}`, semantic: `${browserModels.semantic.model}@${browserModels.semantic.revision}`, vision: "MediaPipe Tasks Vision 1.0.1" }, warnings } satisfies Omit<LocalAnalysis, "report">; const report = buildDeterministicReport(partial); onProgress({ stage: "complete", progress: 100, message: "Local multimodal analysis complete" }); return { ...partial, report };
+  })();
+  return { promise, cancel: () => { isCancelled = true; } };
+}

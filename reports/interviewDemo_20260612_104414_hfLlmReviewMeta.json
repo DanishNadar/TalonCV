@@ -1,0 +1,6 @@
+{
+  "modelName": "Qwen/Qwen3-8B",
+  "promptPath": "/home/spiron/Documents/Development/TalonCV/data/demo/llmReady/interviewDemo_20260612_104414_llmReadyPrompt.txt",
+  "outputPath": "/home/spiron/Documents/Development/TalonCV/reports/interviewDemo_20260612_104414_hfLlmReview.md",
+  "createdAt": "2026-06-12T15:57:50.718833+00:00"
+}
