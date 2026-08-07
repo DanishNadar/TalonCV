@@ -5,7 +5,7 @@ describe("results navigation", () => {
   it("preserves all eight TalonCV review tabs", () => {
     expect(reviewTabs).toEqual([
       "Overview", "Transcript", "Answer Quality", "Vocal Delivery",
-      "Visual Cues", "Multimodal Moments", "Full Report", "Downloads",
+      "Visual Cues", "Multimodal Moments", "Full Report", "Export",
     ]);
   });
 

@@ -4,9 +4,10 @@ test("public app exposes browser-local setup with no account path", async ({ pag
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("Review what you said");
-  await expect(page.getByRole("link", { name: "Start a practice interview" })).toBeVisible();
-  await expect(page.getByText(/recording, transcript, analysis/i)).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Improve with multimodal AI");
+  await expect(page.getByRole("link", { name: "Start Interview" })).toBeVisible();
+  await expect(page.getByText(/recording, transcript, analysis, and report never leave this device/i)).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Models" })).toBeVisible();
   expect(requests.some((url) => /supabase|railway|api\.openai\.com|api-inference|replicate|groq|together/i.test(url))).toBe(false);
 });
 
@@ -55,9 +56,9 @@ test("ZIP export, re-import, and delete round-trip stays inside the browser", as
   await page.waitForTimeout(4000);
   await page.getByRole("button", { name: "Stop recording" }).click();
   await page.getByRole("button", { name: "Run local multimodal analysis" }).click({ timeout: 30000 });
-  await expect(page.getByRole("tab", { name: "Downloads" })).toBeVisible({ timeout: 480000 });
+  await expect(page.getByRole("tab", { name: "Export" })).toBeVisible({ timeout: 480000 });
 
-  await page.getByRole("tab", { name: "Downloads" }).click();
+  await page.getByRole("tab", { name: "Export" }).click();
   const downloadPromise = page.waitForEvent("download", { timeout: 60000 });
   await page.getByRole("button", { name: "Download ZIP" }).click();
   const download = await downloadPromise;
