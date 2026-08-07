@@ -60,9 +60,9 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="hero-meta">
-            <TechnicalBadge>No account</TechnicalBadge>
+            {/* <TechnicalBadge>No account</TechnicalBadge>
             <TechnicalBadge>No upload</TechnicalBadge>
-            <TechnicalBadge>No API keys</TechnicalBadge>
+            <TechnicalBadge>No API keys</TechnicalBadge> */}
             <TechnicalBadge tone="accent">Browser inference</TechnicalBadge>
           </div>
         </div>

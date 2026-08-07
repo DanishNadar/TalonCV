@@ -11,7 +11,7 @@ const sans = Inter({ subsets: ["latin"], display: "swap", variable: "--font-talo
 const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--font-talon-mono" });
 
 export const metadata: Metadata = {
-  title: { default: "TalonCV · AI Interview Practice Lab", template: "%s · TalonCV" },
+  title: { default: "TalonCV · \nAI Interview Practice Lab", template: "%s · TalonCV" },
   description:
     "TalonCV is a browser-local multimodal AI interview-practice coach. Speech, vocal delivery, semantic relevance, and visible delivery cues are analyzed on your own device.",
 };
