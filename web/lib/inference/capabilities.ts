@@ -25,6 +25,20 @@ function supportsWasmSimd(): boolean | null {
   } catch { return null; }
 }
 
+/** `navigator.gpu` existing does not mean a usable adapter exists — headless,
+ *  virtualized, and blocklisted GPUs expose the API but fail to hand one out.
+ *  Requesting the adapter here keeps the runtime from choosing a backend that
+ *  cannot actually initialize. */
+async function hasWebGpuAdapter(gpu: unknown): Promise<boolean> {
+  const request = (gpu as { requestAdapter?: () => Promise<unknown> } | undefined)?.requestAdapter;
+  if (typeof request !== "function") return false;
+  try {
+    return Boolean(await (gpu as { requestAdapter: () => Promise<unknown> }).requestAdapter());
+  } catch {
+    return false;
+  }
+}
+
 export async function detectCapabilities(): Promise<DeviceCapabilities> {
   if (typeof window === "undefined") throw new Error("Capability detection requires a browser.");
   const nav = navigator as Navigator & { deviceMemory?: number; gpu?: unknown };
@@ -32,7 +46,7 @@ export async function detectCapabilities(): Promise<DeviceCapabilities> {
   const persistentStorage = navigator.storage?.persisted ? await navigator.storage.persisted().catch(() => null) : null;
   const cpuThreads = Math.max(1, nav.hardwareConcurrency || 1);
   const memoryGb = typeof nav.deviceMemory === "number" ? nav.deviceMemory : null;
-  const webgpu = Boolean(nav.gpu);
+  const webgpu = await hasWebGpuAdapter(nav.gpu);
   const tier = webgpu && (memoryGb === null || memoryGb >= 8) ? "accelerated" : cpuThreads >= 4 && (memoryGb === null || memoryGb >= 4) ? "standard" : "lite";
   return {
     ready: typeof WebAssembly !== "undefined" && typeof Worker !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia),

@@ -414,16 +414,16 @@ main { min-height: calc(100vh - 210px); }
 .brand { display: inline-flex; align-items: center; gap: 10px; }
 .brand-mark {
   position: relative;
-  width: 30px;
-  height: 30px;
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border-radius: var(--radius-sm);
-  background: var(--talon-red);
-  box-shadow: 0 4px 14px var(--talon-red-glow);
+  /* The mark carries its own scarlet, so it needs no plate — just a faint
+     bloom so it reads against the graphite header. */
+  filter: drop-shadow(0 0 9px rgba(224, 16, 41, 0.34));
+  transition: filter var(--dur-base) var(--ease);
 }
-.brand-mark svg { width: 17px; height: 17px; display: block; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.brand:hover .brand-mark { filter: drop-shadow(0 0 13px rgba(224, 16, 41, 0.55)); }
 .brand-text { display: grid; gap: 0; line-height: 1.05; }
 .brand-name { font-size: 15.5px; font-weight: 650; letter-spacing: -0.035em; }
 .brand-sub {
@@ -1026,6 +1026,11 @@ select option { background: var(--talon-surface-raised); color: var(--talon-text
 .score-dial svg { position: absolute; inset: 0; transform: rotate(-90deg); }
 .score-dial .track { fill: none; stroke: var(--talon-surface-overlay); stroke-width: 6; }
 .score-dial .value { fill: none; stroke: var(--talon-red); stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset 900ms var(--ease); }
+.score-dial.tone-good .value { stroke: var(--talon-success); }
+.score-dial.tone-mixed .value { stroke: var(--talon-warning); }
+.score-dial.tone-weak .value { stroke: var(--talon-error); }
+.score-dial.tone-unscored .value { stroke: var(--talon-idle); }
+.score-dial.tone-unscored .readout b { color: var(--talon-text-tertiary); }
 .score-dial .readout { display: grid; justify-items: center; gap: 1px; }
 .score-dial .readout b { font-size: 38px; font-weight: 600; letter-spacing: -0.045em; font-variant-numeric: tabular-nums; line-height: 1; }
 .score-dial .readout span { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--talon-text-tertiary); }
@@ -1033,6 +1038,9 @@ select option { background: var(--talon-surface-raised); color: var(--talon-text
 .score-hero-copy h2 { font-size: 20px; }
 .score-hero-copy p { color: var(--talon-text-secondary); font-size: 13.5px; line-height: 1.6; max-width: 62ch; }
 .score-hero-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.reason-list { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+.reason-list li { font-size: 13px; line-height: 1.55; color: var(--talon-warning); }
+.reason-list li::marker { color: var(--talon-warning); }
 
 /* --- Score cards ------------------------------------------------------- */
 
@@ -1139,7 +1147,14 @@ select option { background: var(--talon-surface-raised); color: var(--talon-text
 }
 .evidence-list article:hover { border-color: var(--talon-border-strong); }
 .evidence-list .ev-body { display: grid; gap: 5px; }
+.evidence-list .ev-title { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .evidence-list .ev-body strong { font-size: 13.5px; font-weight: 550; text-transform: capitalize; }
+
+/* Severity rail on timestamped visual events. */
+.evidence-list article.sev-critical { border-left: 3px solid var(--talon-error); background: linear-gradient(90deg, var(--talon-error-wash), transparent 42%), var(--talon-surface); }
+.evidence-list article.sev-caution { border-left: 3px solid var(--talon-warning); background: linear-gradient(90deg, var(--talon-warning-wash), transparent 42%), var(--talon-surface); }
+.evidence-list article.sev-positive { border-left: 3px solid var(--talon-success); }
+.evidence-list article.sev-neutral { border-left: 3px solid var(--talon-border-strong); }
 .evidence-list .ev-body p { color: var(--talon-text-secondary); font-size: 12.5px; line-height: 1.55; }
 .evidence-list .ev-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: 2px; }
 

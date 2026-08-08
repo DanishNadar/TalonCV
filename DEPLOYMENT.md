@@ -30,6 +30,7 @@ If you serve the build from a host other than Vercel, reproduce the `web/vercel.
 
 - `script-src` must keep `'unsafe-inline'`. A static export has no nonce, and Next.js boots from inline scripts, so dropping it leaves the page rendered but unhydrated and completely non-interactive.
 - `script-src` and `connect-src` must both allow `https://cdn.jsdelivr.net`. The MediaPipe and ONNX Runtime workers load their WebAssembly glue from there.
+- `script-src` must include `blob:`. ONNX Runtime Web loads its selected backend through a dynamic `import()` of a blob URL; without it every backend fails with `no available backend found` and transcription silently returns an empty transcript.
 
 Verify headers against the real build before announcing a deploy, not against `npm run dev`, which sends none of them.
 

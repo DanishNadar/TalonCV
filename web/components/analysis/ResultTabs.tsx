@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { Meter, TechnicalBadge, TechnicalPanel, PracticeScore } from "@/components/ui/primitives";
 import type { EvidenceEvent, LocalAnalysis } from "@/types/local";
 
@@ -43,6 +43,82 @@ const dimensions: Array<{ key: string; label: string }> = [
 
 const scoreTone = (score: number | null) => (score === null ? "neutral" : score >= 70 ? "success" : score >= 55 ? "warning" : "accent");
 
+/** Cues that fire continuously during ordinary speech. They are real
+ *  measurements and stay in the exported evidence, but listing them as things to
+ *  "review" is noise, so the Visual Cues tab keeps them behind a toggle. */
+const ambientCues = new Set([
+  "mouthOpen",
+  "speechLikeMouthActivity",
+  "eyebrowRaise",
+  "neutralExpression",
+  "positiveExpression",
+  "eyesClosedLike",
+  "rapidBlinkLikeActivity",
+  "nodding",
+  "headTilt",
+  "faceMeshMissing",
+]);
+
+const isActionableCue = (event: EvidenceEvent) => !ambientCues.has(event.eventType);
+
+/** Cues that stop the analysis from seeing you at all, or that a viewer would
+ *  notice immediately. These are the ones worth acting on first. */
+const criticalCues = new Set([
+  "faceMissing",
+  "poseMissing",
+  "facePartiallyOutOfFrame",
+  "faceTooClose",
+  "faceTooFar",
+  "multipleFaces",
+  "blurryImage",
+  "dimLighting",
+  "overexposedLighting",
+  "lowFaceConfidence",
+]);
+
+/** Cues worth reviewing but not disqualifying: attention, framing drift, and
+ *  movement. */
+const cautionCues = new Set([
+  "lookingAway",
+  "lookingDown",
+  "headTurnedLeft",
+  "headTurnedRight",
+  "lateralHeadMovement",
+  "highHeadMovement",
+  "postureShift",
+  "possibleFidgeting",
+  "bodyLean",
+  "bodyOffCenter",
+  "shoulderTilt",
+  "offCenterFraming",
+  "lowContrast",
+]);
+
+type Severity = "critical" | "caution" | "positive" | "neutral";
+
+function cueSeverity(eventType: string): Severity {
+  if (criticalCues.has(eventType)) return "critical";
+  if (cautionCues.has(eventType)) return "caution";
+  if (["cameraFacing", "stablePosture", "centeredFraming", "handGestureActivity"].includes(eventType)) return "positive";
+  return "neutral";
+}
+
+const severityLabel: Record<Severity, string> = {
+  critical: "High priority",
+  caution: "Review",
+  positive: "Strength",
+  neutral: "Context",
+};
+
+const severityTone: Record<Severity, "error" | "warning" | "success" | "neutral"> = {
+  critical: "error",
+  caution: "warning",
+  positive: "success",
+  neutral: "neutral",
+};
+
+const severityRank: Record<Severity, number> = { critical: 0, caution: 1, neutral: 2, positive: 3 };
+
 function Stat({ label, value, note }: { label: string; value: ReactNode; note?: string }) {
   return (
     <article className="metric-card">
@@ -64,26 +140,32 @@ function Unavailable({ children }: { children: ReactNode }) {
 
 /* --------------------------------------------------------------- event list */
 
-function EventList({ events, seek }: { events: EvidenceEvent[]; seek: (time: number) => void }) {
+function EventList({ events, seek, severity = false }: { events: EvidenceEvent[]; seek: (time: number) => void; severity?: boolean }) {
   if (!events.length) return <Unavailable>No reliable timestamped evidence was available for this modality.</Unavailable>;
   return (
     <div className="evidence-list">
-      {events.map((event, index) => (
-        <article key={`${event.eventType}-${event.startTime}-${index}`}>
-          <button className="timestamp-button" onClick={() => seek(event.startTime)}>
-            {timecode(event.startTime)}
-          </button>
-          <div className="ev-body">
-            <strong>{titleize(event.eventType)}</strong>
-            <p>{event.explanation}</p>
-            {event.coachingInterpretation ? <p>{event.coachingInterpretation}</p> : null}
-            <div className="ev-meta">
-              <TechnicalBadge plain>{event.reliability || "medium"} reliability</TechnicalBadge>
-              <TechnicalBadge plain>{event.durationSeconds.toFixed(2)}s</TechnicalBadge>
+      {events.map((event, index) => {
+        const level = severity ? cueSeverity(event.eventType) : "neutral";
+        return (
+          <article className={severity ? `sev-${level}` : undefined} key={`${event.eventType}-${event.startTime}-${index}`}>
+            <button className="timestamp-button" onClick={() => seek(event.startTime)}>
+              {timecode(event.startTime)}
+            </button>
+            <div className="ev-body">
+              <div className="ev-title">
+                <strong>{titleize(event.eventType)}</strong>
+                {severity ? <TechnicalBadge tone={severityTone[level]}>{severityLabel[level]}</TechnicalBadge> : null}
+              </div>
+              <p>{event.explanation}</p>
+              {event.coachingInterpretation ? <p>{event.coachingInterpretation}</p> : null}
+              <div className="ev-meta">
+                <TechnicalBadge plain>{event.reliability || "medium"} reliability</TechnicalBadge>
+                <TechnicalBadge plain>{event.durationSeconds.toFixed(2)}s</TechnicalBadge>
+              </div>
             </div>
-          </div>
-        </article>
-      ))}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -192,6 +274,100 @@ function Moments({ analysis, seek }: { analysis: LocalAnalysis; seek: (time: num
   );
 }
 
+/* --------------------------------------------------------------- visual cues */
+
+function VisualCuesPanel({ analysis, seek }: { analysis: LocalAnalysis; seek: (time: number) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const actionable = analysis.visualEvents.filter(isActionableCue);
+  const ambient = analysis.visualEvents.length - actionable.length;
+  // Most severe first, then chronological, so the top of the list is the thing
+  // most worth fixing rather than whatever happened at 0:00.
+  const shown = [...(showAll ? analysis.visualEvents : actionable)].sort(
+    (a, b) => severityRank[cueSeverity(a.eventType)] - severityRank[cueSeverity(b.eventType)] || a.startTime - b.startTime,
+  );
+  const critical = actionable.filter((event) => cueSeverity(event.eventType) === "critical").length;
+  const caution = actionable.filter((event) => cueSeverity(event.eventType) === "caution").length;
+  const framePercent = Math.round(
+    (analysis.visualFeatures.filter((row) => row.faceDetected === true).length / Math.max(1, analysis.visualFeatures.length)) * 100,
+  );
+
+  return (
+    <div className="tab-stack">
+      <header>
+        <h2>Visual cues</h2>
+        <p>
+          Observable framing, attention, and movement evidence. These are measurements of what the camera recorded —
+          never claims about emotion, confidence, anxiety, honesty, personality, or professionalism.
+        </p>
+      </header>
+
+      <div className="metric-grid">
+        <Stat label="Frames analyzed" value={analysis.visualFeatures.length} note="Sampled from the recording" />
+        <Stat label="High priority" value={critical} note="Cues that block a clear view of you" />
+        <Stat label="To review" value={caution} note="Attention, framing drift, and movement" />
+        <Stat label="Face detected" value={`${framePercent}%`} note="Of sampled frames" />
+      </div>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Extraction pipeline</h2>
+          <span className="mono" style={{ color: "var(--talon-text-tertiary)" }}>
+            deterministic
+          </span>
+        </div>
+        <div className="panel-body">
+          <dl className="spec-list" style={{ border: 0 }}>
+            <div style={{ background: "transparent" }}>
+              <dt>Detection</dt>
+              <dd>YOLO ONNX face localization where the local asset is present, MediaPipe face detection otherwise.</dd>
+            </div>
+            <div style={{ background: "transparent" }}>
+              <dt>Measurement</dt>
+              <dd>MediaPipe face and pose landmarks produce framing, orientation, and movement features per frame.</dd>
+            </div>
+            <div style={{ background: "transparent" }}>
+              <dt>Cue rules</dt>
+              <dd>Deterministic thresholds calibrated against this recording convert features into candidate cues.</dd>
+            </div>
+            <div style={{ background: "transparent", borderBottom: 0 }}>
+              <dt>Temporal logic</dt>
+              <dd>A persistence state machine keeps only cues that hold across consecutive samples, then emits timestamped events.</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+
+      <section className="stack-4">
+        <div className="row between wrap">
+          <h3 style={{ fontSize: 14 }}>Timestamped visual events</h3>
+          {ambient > 0 ? (
+            <button className="text-button" aria-pressed={showAll} onClick={() => setShowAll((current) => !current)}>
+              {showAll ? "Hide continuous cues" : `Show ${ambient} continuous cue${ambient === 1 ? "" : "s"}`}
+            </button>
+          ) : null}
+        </div>
+        {shown.length ? (
+          <EventList events={shown} seek={seek} severity />
+        ) : (
+          <Unavailable>
+            No framing, attention, stability, or capture-quality cue needed review in this take.
+          </Unavailable>
+        )}
+        {ambient > 0 && !showAll ? (
+          <p className="fine-print">
+            {ambient} continuous cue{ambient === 1 ? "" : "s"} (mouth, eyebrow, and blink-style movement) are hidden
+            because they occur throughout normal speech. They remain in the JSON export.
+          </p>
+        ) : null}
+      </section>
+
+      <TechnicalPanel label="Visual technical details">
+        <pre>{JSON.stringify(analysis.visualFeatures.slice(0, 12), null, 2)}</pre>
+      </TechnicalPanel>
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- report render */
 
 /** Minimal renderer for the deterministic report's markdown subset (h1, h2,
@@ -292,10 +468,23 @@ export function ResultTabPanel(props: TabPanelProps) {
             <PracticeScore score={num(overall.score)} rating={String(overall.rating || "Unavailable")} />
             <div className="score-hero-copy">
               <h2>{String(overall.rating || "Unavailable")}</h2>
-              <p>
-                Explainable practice coaching derived only from observable evidence in this recording. It is not an
-                employment, personality, or suitability assessment.
-              </p>
+              {num(overall.score) === null ? (
+                <div className="stack-4">
+                  <p>
+                    TalonCV withheld an overall score because this take does not contain enough evidence to judge fairly.
+                  </p>
+                  <ul className="reason-list">
+                    {list(overall.evidence).map((reason) => (
+                      <li key={reason}>{reason}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p>
+                  Explainable practice coaching derived only from observable evidence in this recording. It is not an
+                  employment, personality, or suitability assessment.
+                </p>
+              )}
               <div className="score-hero-meta">
                 <TechnicalBadge tone="info">Confidence · {String(overall.confidence || "unavailable")}</TechnicalBadge>
                 <TechnicalBadge>Coverage · {String(overall.dataCoverage || "unavailable")}</TechnicalBadge>
@@ -713,72 +902,8 @@ export function ResultTabPanel(props: TabPanelProps) {
     }
 
     /* --------------------------------------------------------- Visual Cues */
-    case "Visual Cues": {
-      return (
-        <div className="tab-stack">
-          <header>
-            <h2>Visual cues</h2>
-            <p>
-              Observable framing, attention, and movement evidence. These are measurements of what the camera recorded —
-              never claims about emotion, confidence, anxiety, honesty, personality, or professionalism.
-            </p>
-          </header>
-
-          <div className="metric-grid">
-            <Stat label="Frames analyzed" value={analysis.visualFeatures.length} note="Sampled from the recording" />
-            <Stat label="Visual events" value={analysis.visualEvents.length} note="After temporal persistence filtering" />
-            <Stat
-              label="Face detected"
-              value={`${Math.round(
-                (analysis.visualFeatures.filter((row) => row.faceDetected === true).length /
-                  Math.max(1, analysis.visualFeatures.length)) *
-                  100,
-              )}%`}
-              note="Of sampled frames"
-            />
-            <Stat label="Vision runtime" value={analysis.mediaInfo.hasVideo ? "Active" : "No video"} note={analysis.modelVersions.vision ?? "—"} />
-          </div>
-
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Extraction pipeline</h2>
-              <span className="mono" style={{ color: "var(--talon-text-tertiary)" }}>
-                deterministic
-              </span>
-            </div>
-            <div className="panel-body">
-              <dl className="spec-list" style={{ border: 0 }}>
-                <div style={{ background: "transparent" }}>
-                  <dt>Detection</dt>
-                  <dd>YOLO ONNX face localization where the local asset is present, MediaPipe face detection otherwise.</dd>
-                </div>
-                <div style={{ background: "transparent" }}>
-                  <dt>Measurement</dt>
-                  <dd>MediaPipe face and pose landmarks produce framing, orientation, and movement features per frame.</dd>
-                </div>
-                <div style={{ background: "transparent" }}>
-                  <dt>Cue rules</dt>
-                  <dd>Deterministic thresholds calibrated against this recording convert features into candidate cues.</dd>
-                </div>
-                <div style={{ background: "transparent", borderBottom: 0 }}>
-                  <dt>Temporal logic</dt>
-                  <dd>A persistence state machine keeps only cues that hold across consecutive samples, then emits timestamped events.</dd>
-                </div>
-              </dl>
-            </div>
-          </section>
-
-          <section className="stack-4">
-            <h3 style={{ fontSize: 14 }}>Timestamped visual events</h3>
-            <EventList events={analysis.visualEvents} seek={seek} />
-          </section>
-
-          <TechnicalPanel label="Visual technical details">
-            <pre>{JSON.stringify(analysis.visualFeatures.slice(0, 12), null, 2)}</pre>
-          </TechnicalPanel>
-        </div>
-      );
-    }
+    case "Visual Cues":
+      return <VisualCuesPanel analysis={analysis} seek={seek} />;
 
     /* -------------------------------------------------- Multimodal Moments */
     case "Multimodal Moments": {

@@ -1,16 +1,14 @@
+import Image from "next/image";
 import type { ReactNode } from "react";
 
 /* ---------------------------------------------------------------- TalonLogo */
 
-/** Angular talon mark. Geometric, Miesian, and entirely our own — no Illinois
- *  Tech logo is reproduced anywhere in the product. */
-export function TalonLogo({ size = 30 }: { size?: number }) {
+/** The TalonCV falcon mark. Supplied as scarlet artwork on black and converted
+ *  to an alpha matte, so it sits on any surface without a visible plate. */
+export function TalonLogo({ size = 32 }: { size?: number }) {
   return (
     <span className="brand-mark" style={{ width: size, height: size }} aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none">
-        <path d="M4 3h6.5L20 21h-6.2L4 3Z" fill="#fff" />
-        <path d="M13.4 3H20v6.2L13.4 3Z" fill="#fff" opacity="0.55" />
-      </svg>
+      <Image src="/taloncv-mark.png" alt="" width={size} height={size} priority />
     </span>
   );
 }
@@ -255,15 +253,21 @@ export function PracticeScore({ score, rating }: { score: number | null; rating:
   const radius = 58;
   const circumference = 2 * Math.PI * radius;
   const offset = score === null ? circumference : circumference * (1 - Math.max(0, Math.min(100, score)) / 100);
+  // The arc colour tracks the band so a weak take never reads as a strong one.
+  const tone = score === null ? "unscored" : score >= 74 ? "good" : score >= 60 ? "mixed" : "weak";
   return (
-    <div className="score-dial" role="img" aria-label={`Practice score ${score === null ? "unavailable" : Math.round(score)} out of 100, ${rating}`}>
+    <div
+      className={`score-dial tone-${tone}`}
+      role="img"
+      aria-label={`Practice score ${score === null ? "not scored" : `${Math.round(score)} out of 100`}, ${rating}`}
+    >
       <svg viewBox="0 0 132 132" aria-hidden="true">
         <circle className="track" cx="66" cy="66" r={radius} />
         <circle className="value" cx="66" cy="66" r={radius} strokeDasharray={circumference} strokeDashoffset={offset} />
       </svg>
       <span className="readout">
         <b>{score === null ? "—" : Math.round(score)}</b>
-        <span>Practice score</span>
+        <span>{score === null ? "Not scored" : "Practice score"}</span>
       </span>
     </div>
   );

@@ -24,6 +24,8 @@ const asRecord = (value: unknown): Record<string, unknown> =>
 export function seekVideoElement(video: HTMLVideoElement | null, timestamp: number): boolean {
   if (!video || !Number.isFinite(timestamp)) return false;
   video.currentTime = Math.max(0, timestamp);
+  // Bring the player back into view; evidence lists sit far below it.
+  video.scrollIntoView?.({ behavior: "smooth", block: "center" });
   void video.play().catch(() => undefined);
   return true;
 }

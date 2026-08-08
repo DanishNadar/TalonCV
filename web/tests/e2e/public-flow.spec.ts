@@ -44,6 +44,25 @@ test("real browser model integration downloads public model assets without inter
   await page.getByRole("tab", { name: "Full Report" }).click();
   await expect(page.locator(".report-text").first()).toContainText("TalonCV Local Interview Review");
   expect(forbidden).toEqual([]);
+
+  // The speech runtime must actually initialize. Session-creation and backend
+  // failures previously surfaced only as an empty transcript, which is
+  // indistinguishable from a silent recording unless the warning is inspected.
+  const warnings = await page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const open = indexedDB.open("taloncv-local");
+        open.onsuccess = () => {
+          const get = open.result.transaction("artifacts").objectStore("artifacts").getAll();
+          get.onsuccess = () => {
+            const analysis = get.result.find((row) => row.key === "analysis")?.value;
+            resolve(analysis?.transcript?.warnings ?? []);
+          };
+        };
+        open.onerror = () => resolve(["indexeddb-unavailable"]);
+      }),
+  );
+  expect(warnings.join(" ")).not.toMatch(/Can't create a session|no available backend|Failed to fetch dynamically imported module/i);
 });
 
 test("ZIP export, re-import, and delete round-trip stays inside the browser", async ({ page }) => {
