@@ -24,3 +24,5 @@ web/test-results/
 *.tsbuildinfo
 out/
 .next/
+# Vendored at build time by web/scripts/copyOnnxRuntime.mjs
+web/public/ort/

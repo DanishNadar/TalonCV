@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "prebuild": "node scripts/copyOnnxRuntime.mjs",
+    "predev": "node scripts/copyOnnxRuntime.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

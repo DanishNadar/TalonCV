@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 /** The TalonCV falcon mark. Supplied as scarlet artwork on black and converted
  *  to an alpha matte, so it sits on any surface without a visible plate. */
-export function TalonLogo({ size = 32 }: { size?: number }) {
+export function TalonLogo({ size = 34 }: { size?: number }) {
   return (
     <span className="brand-mark" style={{ width: size, height: size }} aria-hidden="true">
       <Image src="/taloncv-mark.png" alt="" width={size} height={size} priority />

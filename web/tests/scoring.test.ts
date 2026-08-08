@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildCoachingScores } from "@/lib/inference/multimodal/scoring";
-import type { EvidenceEvent } from "@/types/local";
+import { analyzeTranscript } from "@/lib/inference/audio/transcriptAnalyzer";
+import type { EvidenceEvent, TranscriptArtifact } from "@/types/local";
+
+const transcriptOf = (text: string): TranscriptArtifact => ({
+  text,
+  segments: [{ text, start: 0, end: 40 }],
+  averageConfidence: 0.9,
+  available: true,
+});
 
 const event = (eventType: string, startTime: number, endTime: number): EvidenceEvent => ({
   eventType,
@@ -111,6 +119,20 @@ describe("browser coaching scores", () => {
     expect(strong - weak).toBeGreaterThan(25);
   });
 
+  it("withholds the overall score when speech was audible but never transcribed", () => {
+    const result = buildCoachingScores(
+      { hasAudio: true, hasVideo: true, durationSeconds: 90 },
+      audio(),
+      [],
+      { available: false, metrics: { wordCount: 0 } },
+      [event("cameraFacing", 0, 85), event("centeredFraming", 0, 85)],
+      [],
+    );
+    const overall = overallOf(result);
+    expect(overall.score).toBeNull();
+    expect(overall.evidence.join(" ")).toMatch(/Transcription did not complete/);
+  });
+
   it("keeps visual scoring proportional to time rather than event count", () => {
     const brief = dimensionOf(
       buildCoachingScores(
@@ -135,5 +157,34 @@ describe("browser coaching scores", () => {
       "visualDelivery",
     ).score!;
     expect(brief).toBeGreaterThan(sustained + 20);
+  });
+});
+
+describe("answer content rubric", () => {
+  const context = { interviewQuestion: "Tell me about a challenging technical project." };
+  const onTopic =
+    "For example, on a project last year I led a rebuild of our data pipeline. I implemented a batching strategy and as a result we reduced processing time by 37 percent and improved reliability for 12000 users.";
+  const offTopic = "Um, yeah, so like, I guess, you know, basically I am a hard worker and a team player and a people person.";
+
+  it("maps semantic similarity onto the score scale instead of ignoring it", () => {
+    const relevant = analyzeTranscript(transcriptOf(onTopic), context, { available: true, questionRelevance: 0.44 });
+    const irrelevant = analyzeTranscript(transcriptOf(onTopic), context, { available: true, questionRelevance: 0.05 });
+    const relevantScore = (relevant.rubric as Record<string, { score: number }>).overallVerbalResponse.score;
+    const irrelevantScore = (irrelevant.rubric as Record<string, { score: number }>).overallVerbalResponse.score;
+    // Identical wording, different topical fit: the gap must be substantial.
+    expect(relevantScore - irrelevantScore).toBeGreaterThan(25);
+  });
+
+  it("caps an answer that does not address the question", () => {
+    const drifted = analyzeTranscript(transcriptOf(onTopic), context, { available: true, questionRelevance: 0.04 });
+    expect((drifted.rubric as Record<string, { score: number }>).overallVerbalResponse.score).toBeLessThanOrEqual(38);
+    expect((drifted.practiceAreas as string[]).join(" ")).toMatch(/Answer the question that was asked/);
+  });
+
+  it("rates vague filler-heavy content far below concrete content", () => {
+    const good = analyzeTranscript(transcriptOf(onTopic), context, { available: true, questionRelevance: 0.4 });
+    const bad = analyzeTranscript(transcriptOf(offTopic), context, { available: true, questionRelevance: 0.4 });
+    const score = (result: Record<string, unknown>) => (result.rubric as Record<string, { score: number }>).overallVerbalResponse.score;
+    expect(score(good) - score(bad)).toBeGreaterThan(20);
   });
 });

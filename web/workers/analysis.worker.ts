@@ -4,10 +4,12 @@ import { browserModels } from "@/config/browser-models";
 import { analyzeAudio } from "@/lib/inference/audio/audioAnalyzer";
 import { analyzeTranscript } from "@/lib/inference/audio/transcriptAnalyzer";
 import { analyzeSemanticResponse } from "@/lib/inference/semantic/semanticAnalyzer";
+import { configureLocalOnnxRuntime } from "@/lib/inference/onnxRuntime";
 import type { LocalSessionContext, TranscriptArtifact } from "@/types/local";
 import type { WorkerRequest, WorkerResponse } from "@/lib/inference/workerProtocol";
 
 declare const self: DedicatedWorkerGlobalScope;
+configureLocalOnnxRuntime();
 let cancelled = false;
 type LocalPipeline = ((input: unknown, options?: unknown) => Promise<unknown>) & { dispose?: () => Promise<void> };
 function send(message: WorkerResponse) { self.postMessage(message); }
@@ -45,11 +47,11 @@ async function withCpuFallback<T>(provider: "wasm" | "webgpu", run: (provider: "
 async function transcribe(samples: Float32Array, provider: "wasm" | "webgpu", profile: "fast" | "balanced"): Promise<TranscriptArtifact> {
   const preferred = profile === "balanced" ? browserModels.speechBalanced : browserModels.speechFast;
   const dtypes = [preferred.dtype!, preferred.dtype === "q8" ? "q4" : "q8", "fp32"];
-  const attempts: Array<{ dtype: string; device: "wasm" | "webgpu" }> = [];
-  for (const dtype of dtypes) {
-    if (provider === "webgpu") attempts.push({ dtype, device: "webgpu" });
-    attempts.push({ dtype, device: "wasm" });
-  }
+  // Speech runs on CPU/WASM only. WebGPU has failed to produce a usable backend
+  // in every environment tested, and for a model this small the accelerator buys
+  // little while its failure mode poisons ORT's backend registry for the worker.
+  void provider;
+  const attempts: Array<{ dtype: string; device: "wasm" | "webgpu" }> = dtypes.map((dtype) => ({ dtype, device: "wasm" as const }));
 
   const failures: string[] = [];
   for (const [index, attempt] of attempts.entries()) {
@@ -77,7 +79,8 @@ async function transcribe(samples: Float32Array, provider: "wasm" | "webgpu", pr
 }
 async function runSemantic(transcript: TranscriptArtifact, context: LocalSessionContext, provider: "wasm" | "webgpu") {
   const model = browserModels.semantic;
-  return withCpuFallback(provider, async (device) => {
+  void provider;
+  return withCpuFallback("wasm", async (device) => {
     progress("loadingSemantic", 0, "Loading semantic model locally", model.id, 0, model.estimatedBytes);
     let pipe: LocalPipeline | undefined;
     try { pipe = await pipeline("feature-extraction", model.model!, modelOptions(model, device)) as unknown as LocalPipeline; if (cancelled) throw new Error("Analysis cancelled."); progress("analyzingSemantic", 10, "Analyzing relevance locally", model.id, model.estimatedBytes, model.estimatedBytes); return await analyzeSemanticResponse(transcript, context, async (texts) => { const output = await pipe!(texts, { pooling: "mean", normalize: true }) as { tolist?: () => number[][]; data?: Float32Array; dims?: number[] }; if (output.tolist) return output.tolist(); const dimensions = output.dims?.at(-1) || 1; return Array.from(output.data || []).reduce<number[][]>((all, value, index) => { const bucket = Math.floor(index / dimensions); (all[bucket] ??= []).push(value); return all; }, []); }); }

@@ -1,9 +1,11 @@
 /// <reference lib="webworker" />
 import { pipeline, type PretrainedModelOptions } from "@huggingface/transformers";
 import { browserModels } from "@/config/browser-models";
+import { configureLocalOnnxRuntime } from "@/lib/inference/onnxRuntime";
 import type { WorkerRequest, WorkerResponse } from "@/lib/inference/workerProtocol";
 
 declare const self: DedicatedWorkerGlobalScope;
+configureLocalOnnxRuntime();
 let cancelled = false;
 function send(message: WorkerResponse) { self.postMessage(message); }
 function prompt(evidence: Record<string, unknown>) { return `You are TalonCV's local interview-practice editor. Use only this structured evidence. Do not infer personality, emotion, anxiety, honesty, intelligence, employability, protected traits, or hiring suitability. Do not invent facts. Give a concise coaching summary with two strengths and up to three practice steps.\n\nEvidence:\n${JSON.stringify(evidence).slice(0, 9000)}\n\nCoaching summary:`; }

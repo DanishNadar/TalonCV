@@ -361,7 +361,11 @@ export function buildCoachingScores(
   // good framing makes one second scoreable. A long-but-silent or long-but-brief
   // take *is* scored, because saying nothing is itself the result.
   const tooShort = duration < minimumSeconds;
-  const transcriptionBroken = transcriptMissingButSpoke && included.length < 3;
+  // If speech was audible but never transcribed, the content of the answer is
+  // unknown. Delivery and framing alone must not produce a confident headline
+  // score, because the thing being practised — what you actually said — was
+  // never examined.
+  const transcriptionBroken = transcriptMissingButSpoke;
   const insufficient = tooShort || transcriptionBroken;
   const tooFewWords = spokeAudibly && wordCount < minimumWords;
 

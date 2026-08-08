@@ -96,10 +96,15 @@ const cautionCues = new Set([
 
 type Severity = "critical" | "caution" | "positive" | "neutral";
 
+/** Vocal events, graded the same way: red when the recording itself is
+ *  compromised, amber when the delivery is worth revisiting. */
+const criticalVocalCues = new Set(["audioDropout", "lowAudioQuality", "audioClipping"]);
+const cautionVocalCues = new Set(["longPause", "lowVolume", "rapidSpeech", "slowSpeech"]);
+
 function cueSeverity(eventType: string): Severity {
-  if (criticalCues.has(eventType)) return "critical";
-  if (cautionCues.has(eventType)) return "caution";
-  if (["cameraFacing", "stablePosture", "centeredFraming", "handGestureActivity"].includes(eventType)) return "positive";
+  if (criticalCues.has(eventType) || criticalVocalCues.has(eventType)) return "critical";
+  if (cautionCues.has(eventType) || cautionVocalCues.has(eventType)) return "caution";
+  if (["cameraFacing", "stablePosture", "centeredFraming", "handGestureActivity", "strongVocalEmphasis"].includes(eventType)) return "positive";
   return "neutral";
 }
 
@@ -228,16 +233,19 @@ function Moments({ analysis, seek }: { analysis: LocalAnalysis; seek: (time: num
     <div className="moment-list">
       {analysis.moments.map((moment, index) => {
         const classification = String(moment.classification || "context");
-        const audioEvents = list(moment.audioEvents).map(titleize).join(", ");
+        const cueTypes = [...list(moment.audioEvents), ...list(moment.visualEvents)];
+        const worst = cueTypes.some((type) => cueSeverity(type) === "critical") ? "critical" : classification;
+        const severityClass = classification === "review" ? worst : classification;
+        const audioEvents = cueTypes.length ? list(moment.audioEvents).map(titleize).join(", ") : "";
         const visualEvents = list(moment.visualEvents).map(titleize).join(", ");
         return (
-          <article className={`moment ${classification}`} key={`${String(moment.alignmentCategory)}-${index}`}>
+          <article className={`moment ${severityClass}`} key={`${String(moment.alignmentCategory)}-${index}`}>
             <div className="moment-rail">
               <button className="timestamp-button" onClick={() => seek(Number(moment.startTime))}>
                 {timecode(moment.startTime)}
               </button>
-              <TechnicalBadge tone={classification === "strength" ? "success" : classification === "review" ? "warning" : "neutral"}>
-                {classification}
+              <TechnicalBadge tone={classification === "strength" ? "success" : severityClass === "critical" ? "error" : classification === "review" ? "warning" : "neutral"}>
+                {severityClass === "critical" ? "revisit" : classification}
               </TechnicalBadge>
             </div>
             <div className="moment-body">
@@ -696,8 +704,8 @@ export function ResultTabPanel(props: TabPanelProps) {
             <Stat label="STAR elements" value={`${star ?? 0}/4`} note="Situation, action, result, conclusion markers" />
             <Stat
               label="Question relevance"
-              value={relevance === null ? "—" : relevance.toFixed(2)}
-              note="MiniLM cosine similarity, 0–1"
+              value={num(asRecord(response.relevanceAnalysis).score) === null ? "—" : Math.round(num(asRecord(response.relevanceAnalysis).score)!)}
+              note={relevance === null ? "MiniLM semantic match" : `MiniLM cosine ${relevance.toFixed(2)} → 0–100`}
             />
           </div>
 
@@ -709,7 +717,7 @@ export function ResultTabPanel(props: TabPanelProps) {
               </span>
             </div>
             <div className="panel-body stack-5">
-              {["structure", "clarity", "specificity", "conciseness"].map((key) => {
+              {["relevance", "substance", "structure", "clarity", "specificity", "conciseness"].filter((key) => rubric[key]).map((key) => {
                 const entry = asRecord(rubric[key]);
                 const value = num(entry.score);
                 return (
@@ -891,7 +899,13 @@ export function ResultTabPanel(props: TabPanelProps) {
 
           <section className="stack-4">
             <h3 style={{ fontSize: 14 }}>Timestamped vocal events</h3>
-            <EventList events={analysis.audioEvents} seek={seek} />
+            <EventList
+              events={[...analysis.audioEvents].sort(
+                (a, b) => severityRank[cueSeverity(a.eventType)] - severityRank[cueSeverity(b.eventType)] || a.startTime - b.startTime,
+              )}
+              seek={seek}
+              severity
+            />
           </section>
 
           <TechnicalPanel label="Vocal delivery technical details">
