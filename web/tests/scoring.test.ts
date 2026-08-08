@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildCoachingScores } from "@/lib/inference/multimodal/scoring";
 import { analyzeTranscript } from "@/lib/inference/audio/transcriptAnalyzer";
+import { resampleForSpeech } from "@/lib/inference/audio/speechResampler";
 import type { EvidenceEvent, TranscriptArtifact } from "@/types/local";
 
 const transcriptOf = (text: string): TranscriptArtifact => ({
@@ -133,6 +134,33 @@ describe("browser coaching scores", () => {
     expect(overall.evidence.join(" ")).toMatch(/Transcription did not complete/);
   });
 
+  it("withholds the overall score when a spoken response is too short to judge", () => {
+    const result = buildCoachingScores(
+      { hasAudio: true, hasVideo: true, durationSeconds: 30 },
+      audio(),
+      [],
+      response({ metrics: { wordCount: 10, fillerRatePer100Words: 0 } }),
+      [event("cameraFacing", 0, 30), event("centeredFraming", 0, 30)],
+      [],
+    );
+    const overall = overallOf(result);
+    expect(overall.score).toBeNull();
+    expect(overall.evidence.join(" ")).toMatch(/Only 10 transcript words/);
+  });
+
+  it("withholds answer scoring when the transcript is repetitive and unreliable", () => {
+    const result = buildCoachingScores(
+      { hasAudio: true, hasVideo: true, durationSeconds: 30 },
+      audio(),
+      [],
+      response({ reliableForContentScoring: false }),
+      [event("cameraFacing", 0, 30)],
+      [],
+    );
+    expect(dimensionOf(result, "verbalResponseQuality").score).toBeNull();
+    expect(overallOf(result).score).toBeNull();
+  });
+
   it("keeps visual scoring proportional to time rather than event count", () => {
     const brief = dimensionOf(
       buildCoachingScores(
@@ -186,5 +214,30 @@ describe("answer content rubric", () => {
     const bad = analyzeTranscript(transcriptOf(offTopic), context, { available: true, questionRelevance: 0.4 });
     const score = (result: Record<string, unknown>) => (result.rubric as Record<string, { score: number }>).overallVerbalResponse.score;
     expect(score(good) - score(bad)).toBeGreaterThan(20);
+  });
+
+  it("flags a transcript dominated by repeated short sounds as unreliable", () => {
+    const repeated = analyzeTranscript(
+      transcriptOf("I'm so sorry. Oh, oh, oh, oh, oh, oh."),
+      context,
+      { available: true, questionRelevance: 0.2 },
+    );
+    expect(repeated.reliableForContentScoring).toBe(false);
+    expect((repeated.warnings as string[]).join(" ")).toMatch(/repeated short sounds/);
+  });
+});
+
+describe("speech resampling", () => {
+  it("converts browser-rate samples to Whisper's required 16 kHz", () => {
+    const source = new Float32Array(48_000).fill(0.25);
+    const output = resampleForSpeech(source, 48_000);
+    expect(output).toHaveLength(16_000);
+    expect(output[0]).toBeCloseTo(0.25, 6);
+    expect(output[output.length - 1]).toBeCloseTo(0.25, 6);
+  });
+
+  it("does not alter audio that is already 16 kHz", () => {
+    const source = new Float32Array([0.1, -0.2, 0.3]);
+    expect(resampleForSpeech(source, 16_000)).toBe(source);
   });
 });

@@ -119,6 +119,7 @@ export function buildCoachingScores(
   // performance signal, and only it should be scored.
   const spokeAudibly = audioAvailable && speechRatio >= 0.15;
   const transcriptMissingButSpoke = response.available !== true && spokeAudibly;
+  const transcriptUnreliable = spokeAudibly && response.reliableForContentScoring === false;
 
   /* --- Recording quality ------------------------------------------------ */
   const recordingQuality = !audioAvailable
@@ -218,6 +219,8 @@ export function buildCoachingScores(
   const rubric = (response.rubric ?? {}) as Record<string, { score?: number }>;
   const verbalResponseQuality = transcriptMissingButSpoke
     ? unavailable("Speech was audible but transcription did not complete, so answer analysis could not run.")
+    : transcriptUnreliable
+      ? unavailable("Speech was audible, but the transcript was too repetitive to judge answer content fairly.")
     : !mediaInfo.hasAudio
       ? unavailable("No audio track was available for answer analysis.")
       : !spokeAudibly
@@ -366,21 +369,24 @@ export function buildCoachingScores(
   // score, because the thing being practised — what you actually said — was
   // never examined.
   const transcriptionBroken = transcriptMissingButSpoke;
-  const insufficient = tooShort || transcriptionBroken;
   const tooFewWords = spokeAudibly && wordCount < minimumWords;
+  const insufficient = tooShort || transcriptionBroken || tooFewWords || transcriptUnreliable;
 
   const reasons = [
     ...(tooShort ? [`The recording is ${duration.toFixed(1)}s; at least ${minimumSeconds}s is needed for an overall score.`] : []),
     ...(transcriptionBroken ? ["Transcription did not complete, so the largest scoring component is missing."] : []),
+    ...(tooFewWords ? [`Only ${wordCount} transcript words were available; at least ${minimumWords} are needed to judge answer content fairly.`] : []),
+    ...(transcriptUnreliable ? ["The transcript was dominated by repeated short sounds, so answer-content scoring was withheld."] : []),
   ];
 
   const overall =
     insufficient
-      ? dimension(null, "insufficient", reasons, [], ["Record a longer, spoken answer so TalonCV can score the full take."], "Withheld: the recording did not meet the minimum evidence thresholds.", {
+      ? dimension(null, "insufficient", reasons, [], ["Record a longer, spoken answer with enough clear words for TalonCV to judge the content."], "Withheld: the recording did not meet the minimum evidence thresholds.", {
           durationSeconds: round(duration),
           wordCount,
           minimumSeconds,
           minimumWords,
+          transcriptUnreliable,
         })
       : weighted === null
         ? unavailable("No usable audio, transcript, or visual evidence was available.")
@@ -400,7 +406,7 @@ export function buildCoachingScores(
           );
 
   return {
-    analysisVersion: "browser-scores-v2",
+    analysisVersion: "browser-scores-v3",
     scores: { ...scores, overallInterviewPracticeDelivery: overall },
     safetyNote:
       "These are explainable interview-practice coaching scores. They are not hiring scores and do not assess personality, honesty, intelligence, emotion, mental state, protected characteristics, or suitability for employment.",

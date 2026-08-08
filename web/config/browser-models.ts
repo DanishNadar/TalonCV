@@ -41,7 +41,7 @@ export const browserModels: Record<BrowserModelId, BrowserModelDefinition> = {
   },
 };
 
-export const browserAnalysisVersion = "browser-local-v1";
+export const browserAnalysisVersion = "browser-local-v2";
 export const modelHostPolicy = {
   purpose: "Static model files only; TalonCV never sends interview content to a model host.",
   localFaceOnnxUrl: "/models/yolo11n-face.onnx",

@@ -3,6 +3,7 @@ import { pipeline, type PretrainedModelOptions } from "@huggingface/transformers
 import { browserModels } from "@/config/browser-models";
 import { analyzeAudio } from "@/lib/inference/audio/audioAnalyzer";
 import { analyzeTranscript } from "@/lib/inference/audio/transcriptAnalyzer";
+import { resampleForSpeech, speechSampleRate } from "@/lib/inference/audio/speechResampler";
 import { analyzeSemanticResponse } from "@/lib/inference/semantic/semanticAnalyzer";
 import { configureLocalOnnxRuntime } from "@/lib/inference/onnxRuntime";
 import type { LocalSessionContext, TranscriptArtifact } from "@/types/local";
@@ -44,7 +45,7 @@ async function withCpuFallback<T>(provider: "wasm" | "webgpu", run: (provider: "
  *  Web build can reject one dtype's decoder graph outright while another loads
  *  fine. Transcription therefore walks a chain of (dtype, device) pairs and
  *  keeps the first that produces a session, instead of losing speech entirely. */
-async function transcribe(samples: Float32Array, provider: "wasm" | "webgpu", profile: "fast" | "balanced"): Promise<TranscriptArtifact> {
+async function transcribe(samples: Float32Array, sampleRate: number, provider: "wasm" | "webgpu", profile: "fast" | "balanced"): Promise<TranscriptArtifact> {
   const preferred = profile === "balanced" ? browserModels.speechBalanced : browserModels.speechFast;
   const dtypes = [preferred.dtype!, preferred.dtype === "q8" ? "q4" : "q8", "fp32"];
   // Speech runs on CPU/WASM only. WebGPU has failed to produce a usable backend
@@ -52,6 +53,7 @@ async function transcribe(samples: Float32Array, provider: "wasm" | "webgpu", pr
   // little while its failure mode poisons ORT's backend registry for the worker.
   void provider;
   const attempts: Array<{ dtype: string; device: "wasm" | "webgpu" }> = dtypes.map((dtype) => ({ dtype, device: "wasm" as const }));
+  const speechSamples = resampleForSpeech(samples, sampleRate, speechSampleRate);
 
   const failures: string[] = [];
   for (const [index, attempt] of attempts.entries()) {
@@ -65,7 +67,7 @@ async function transcribe(samples: Float32Array, provider: "wasm" | "webgpu", pr
       // whisper-tiny.en is English-only, so `language`/`task` are rejected, and
       // the export carries no cross-attentions, so word-level timestamps are
       // unavailable. Segment chunks are what downstream analysis expects anyway.
-      const output = await pipe(samples, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 });
+      const output = await pipe(speechSamples, { return_timestamps: true, chunk_length_s: 30, stride_length_s: 5 });
       return toSegments(output);
     } catch (error) {
       if (cancelled) throw error;
@@ -97,7 +99,7 @@ self.onmessage = async (message: MessageEvent<WorkerRequest>) => {
     cancelled = false;
     const payload = request.payload as { samples: ArrayBuffer; sampleRate: number; channels: number; context: LocalSessionContext; provider: "wasm" | "webgpu"; profile: "fast" | "balanced"; testTranscript?: TranscriptArtifact };
     const samples = new Float32Array(payload.samples); let transcript: TranscriptArtifact;
-    try { transcript = payload.testTranscript || await transcribe(samples, payload.provider, payload.profile); }
+    try { transcript = payload.testTranscript || await transcribe(samples, payload.sampleRate, payload.provider, payload.profile); }
     catch (error) { if (cancelled) throw error; transcript = { available: false, text: "", segments: [], averageConfidence: null, warnings: [error instanceof Error ? error.message : "Local speech transcription failed."] }; }
     if (cancelled) throw new Error("Analysis cancelled."); progress("analyzingAudio", 35, "Analyzing vocal delivery", undefined); const audio = analyzeAudio(samples, payload.sampleRate, payload.channels, transcript);
     let semanticAnalysis: Record<string, unknown> = { available: false, warnings: ["Semantic analysis unavailable."] };

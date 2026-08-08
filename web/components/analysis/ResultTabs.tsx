@@ -460,11 +460,13 @@ export function ResultTabPanel(props: TabPanelProps) {
   switch (tab) {
     /* ------------------------------------------------------------ Overview */
     case "Overview": {
+      const contentEvidenceInsufficient = num(overall.score) === null && String(overall.rating) === "Insufficient evidence";
       const strengths = [
-        ...analysis.moments.filter((moment) => moment.classification === "strength").map((moment) => String(moment.explanation)),
-        ...dimensions.flatMap(({ key }) => list(asRecord(scores[key]).positiveObservations)),
+        ...(contentEvidenceInsufficient ? [] : analysis.moments.filter((moment) => moment.classification === "strength").map((moment) => String(moment.explanation))),
+        ...(contentEvidenceInsufficient ? [] : dimensions.flatMap(({ key }) => list(asRecord(scores[key]).positiveObservations))),
       ].filter(Boolean);
       const reviews = [
+        ...list(overall.practiceAreas),
         ...analysis.moments.filter((moment) => moment.classification === "review").map((moment) => String(moment.coachingRecommendation)),
         ...list(response.practiceAreas),
       ].filter(Boolean);
@@ -554,7 +556,7 @@ export function ResultTabPanel(props: TabPanelProps) {
                     </div>
                   ))
                 ) : (
-                  <Unavailable>No timestamped strength evidence met the reporting threshold for this take.</Unavailable>
+                  <Unavailable>{contentEvidenceInsufficient ? "Answer-content evidence was insufficient, so delivery observations are not presented as overall strengths." : "No timestamped strength evidence met the reporting threshold for this take."}</Unavailable>
                 )}
               </div>
             </section>
@@ -713,7 +715,7 @@ export function ResultTabPanel(props: TabPanelProps) {
             <div className="panel-header">
               <h2>Deterministic rubric</h2>
               <span className="mono" style={{ color: "var(--talon-text-tertiary)" }}>
-                browser-response-v1
+                browser-response-v2
               </span>
             </div>
             <div className="panel-body stack-5">

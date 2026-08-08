@@ -8,10 +8,30 @@ const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9']+/g) || [];
 const includesPhrase = (text: string, phrase: string) => text.toLowerCase().includes(phrase);
 const rating = (score: number) => score >= 85 ? "Strong evidence" : score >= 70 ? "Generally effective" : score >= 55 ? "Mixed evidence" : "Practice priority";
 
+function transcriptIntegrity(words: string[]) {
+  const counts = new Map<string, number>();
+  for (const word of words) counts.set(word, (counts.get(word) || 0) + 1);
+  const dominantCount = Math.max(0, ...counts.values());
+  const dominantShare = words.length ? dominantCount / words.length : 0;
+  const nonLexicalTokens = new Set(["ah", "eh", "er", "hmm", "hm", "oh", "uh", "um"]);
+  const nonLexicalCount = words.filter((word) => nonLexicalTokens.has(word)).length;
+  const nonLexicalShare = words.length ? nonLexicalCount / words.length : 0;
+  const repetitive = words.length >= 6 && (dominantShare >= 0.4 || nonLexicalShare >= 0.35);
+
+  return {
+    reliableForContentScoring: !repetitive,
+    dominantTokenShare: Number(dominantShare.toFixed(3)),
+    nonLexicalTokenShare: Number(nonLexicalShare.toFixed(3)),
+    reason: repetitive
+      ? "The transcript is dominated by repeated short sounds, so it is not reliable enough to judge answer content."
+      : null,
+  };
+}
+
 export function analyzeTranscript(transcript: TranscriptArtifact, context: LocalSessionContext, semantic?: Record<string, unknown>): Record<string, unknown> {
   const text = transcript.text.trim(); const wordCount = tokens(text).length;
   if (!text) return { analysisVersion: "browser-response-v1", available: false, confidence: "unavailable", metrics: { wordCount: 0 }, rubric: {}, practiceAreas: ["Record an audible answer so TalonCV can provide transcript-based coaching."], suggestedAnswerStructure: [] };
-  const lower = text.toLowerCase(); const occurrences = fillers.flatMap((phrase) => {
+  const lower = text.toLowerCase(); const integrity = transcriptIntegrity(tokens(text)); const occurrences = fillers.flatMap((phrase) => {
     const matches = [...lower.matchAll(new RegExp(`\\b${phrase.replaceAll(" ", "\\s+")}\\b`, "g"))];
     return matches.map((match) => { const ratio = (match.index || 0) / Math.max(1, text.length); const segment = transcript.segments.find((item) => ratio >= 0 && item.text.toLowerCase().includes(phrase)); return { phrase, startTime: segment?.start ?? 0, endTime: segment?.end ?? 0, confidence: "medium" }; });
   });
@@ -90,5 +110,6 @@ export function analyzeTranscript(transcript: TranscriptArtifact, context: Local
     ["overallVerbalResponse", overall],
   ];
   const rubric = Object.fromEntries(rubricScores.map(([name, score]) => [name, { score, rating: rating(score), formula: "Deterministic transcript evidence; not a personality or hiring assessment." }]));
-  return { analysisVersion: "browser-response-v1", available: true, confidence: transcript.averageConfidence !== null && transcript.averageConfidence < 0.6 ? "limited" : "medium", metrics: { wordCount, fillerCount: occurrences.length, fillerRatePer100Words: Number(fillerRate.toFixed(2)), hedgeCount, genericClaimCount: genericCount, exampleMarkerCount: hasExample ? 1 : 0, actionMarkerCount: hasAction ? 1 : 0, resultMarkerCount: hasResult ? 1 : 0, hasConclusion }, fillerOccurrences: occurrences, strongPhrases, relevanceAnalysis: { available: relevanceScore !== null, score: relevanceScore, cosineSimilarity: cosine, substanceScore, uniqueWordRatio: Number(uniqueRatio.toFixed(3)), quantifiedClaims: quantified, redundantPairs, driftSegments }, starAnalysis: { componentsPresent: [hasExample, hasAction, hasResult, hasConclusion].filter(Boolean).length }, rubric, answerDevelopment: { missingElements: practiceAreas, openingNote: wordCount ? "Opening detected from transcript." : "Unavailable", lengthAssessment: wordCount < 45 ? "Brief response" : wordCount > 350 ? "Long response" : "Focused response", exampleQuality: hasExample ? "Concrete example marker detected" : "No concrete example marker", resultQuality: hasResult ? "Result-oriented wording detected" : "No result marker" }, practiceAreas, suggestedAnswerStructure: ["State the situation and your responsibility.", "Describe the action you personally took.", "Name the result, learning, or next step."], semanticAnalysisUsed: Boolean(semantic?.available) };
+  const integrityWarnings = integrity.reason ? [integrity.reason] : [];
+  return { analysisVersion: "browser-response-v2", available: true, confidence: !integrity.reliableForContentScoring || (transcript.averageConfidence !== null && transcript.averageConfidence < 0.6) ? "limited" : "medium", reliableForContentScoring: integrity.reliableForContentScoring, transcriptIntegrity: integrity, metrics: { wordCount, fillerCount: occurrences.length, fillerRatePer100Words: Number(fillerRate.toFixed(2)), hedgeCount, genericClaimCount: genericCount, exampleMarkerCount: hasExample ? 1 : 0, actionMarkerCount: hasAction ? 1 : 0, resultMarkerCount: hasResult ? 1 : 0, hasConclusion }, fillerOccurrences: occurrences, strongPhrases, relevanceAnalysis: { available: relevanceScore !== null, score: relevanceScore, cosineSimilarity: cosine, substanceScore, uniqueWordRatio: Number(uniqueRatio.toFixed(3)), quantifiedClaims: quantified, redundantPairs, driftSegments }, starAnalysis: { componentsPresent: [hasExample, hasAction, hasResult, hasConclusion].filter(Boolean).length }, rubric, answerDevelopment: { missingElements: practiceAreas, openingNote: wordCount ? "Opening detected from transcript." : "Unavailable", lengthAssessment: wordCount < 45 ? "Brief response" : wordCount > 350 ? "Long response" : "Focused response", exampleQuality: hasExample ? "Concrete example marker detected" : "No concrete example marker", resultQuality: hasResult ? "Result-oriented wording detected" : "No result marker" }, practiceAreas: [...integrityWarnings, ...practiceAreas], suggestedAnswerStructure: ["State the situation and your responsibility.", "Describe the action you personally took.", "Name the result, learning, or next step."], semanticAnalysisUsed: Boolean(semantic?.available), warnings: integrityWarnings };
 }
