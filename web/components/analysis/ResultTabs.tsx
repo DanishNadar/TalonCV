@@ -491,8 +491,8 @@ export function ResultTabPanel(props: TabPanelProps) {
                 </div>
               ) : (
                 <p>
-                  Explainable practice coaching derived only from observable evidence in this recording. It is not an
-                  employment, personality, or suitability assessment.
+                  The headline prioritizes answer quality, then vocal and visual delivery. Recording quality and
+                  multimodal alignment remain visible as diagnostics but cannot inflate the practice score.
                 </p>
               )}
               <div className="score-hero-meta">
@@ -609,7 +609,7 @@ export function ResultTabPanel(props: TabPanelProps) {
           ) : (
             <div className="transcript-list">
               {analysis.transcript.segments.map((segment, index) => {
-                const relevance = num(semanticSegments.find((item) => num(item.startTime) === segment.start)?.questionRelevance);
+                const topicMatch = num(semanticSegments.find((item) => num(item.startTime) === segment.start)?.topicMatchScore);
                 const segmentFillers = fillers.filter(
                   (filler) => num(filler.startTime) !== null && num(filler.startTime)! >= segment.start && num(filler.startTime)! < segment.end,
                 );
@@ -624,9 +624,9 @@ export function ResultTabPanel(props: TabPanelProps) {
                     <div className="seg-body">
                       <p>{segment.text}</p>
                       <div className="seg-marks">
-                        {relevance !== null ? (
-                          <TechnicalBadge tone={relevance >= 0.3 ? "success" : relevance >= 0.15 ? "neutral" : "warning"} plain>
-                            relevance {relevance.toFixed(2)}
+                        {topicMatch !== null ? (
+                          <TechnicalBadge tone={topicMatch >= 70 ? "success" : topicMatch >= 45 ? "neutral" : "warning"} plain>
+                            topic match {topicMatch}/100
                           </TechnicalBadge>
                         ) : null}
                         {segmentFillers.length ? (

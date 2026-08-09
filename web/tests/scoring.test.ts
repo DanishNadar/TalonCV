@@ -120,6 +120,42 @@ describe("browser coaching scores", () => {
     expect(strong - weak).toBeGreaterThan(25);
   });
 
+  it("does not let clean capture or a strong aligned moment hide an off-topic answer", () => {
+    const poorContent = response({
+      rubric: { overallVerbalResponse: { score: 39 }, relevance: { score: 35 } },
+      practiceAreas: ["Answer the question that was asked."],
+    });
+    const visual = [event("cameraFacing", 0, 60), event("centeredFraming", 0, 60), event("stablePosture", 0, 60)];
+    const withoutAlignment = overallOf(
+      buildCoachingScores({ hasAudio: true, hasVideo: true, durationSeconds: 90 }, audio(), [], poorContent, visual, []),
+    ).score!;
+    const withAlignment = overallOf(
+      buildCoachingScores(
+        { hasAudio: true, hasVideo: true, durationSeconds: 90 },
+        audio(),
+        [],
+        poorContent,
+        visual,
+        [{ classification: "strength", explanation: "Gesture matched vocal emphasis.", coachingRecommendation: "" }],
+      ),
+    ).score!;
+
+    expect(withAlignment).toBeLessThanOrEqual(55);
+    expect(withAlignment).toBe(withoutAlignment);
+  });
+
+  it("keeps a well-supported answer strong when delivery is also strong", () => {
+    const result = buildCoachingScores(
+      { hasAudio: true, hasVideo: true, durationSeconds: 90 },
+      audio(),
+      [],
+      response({ rubric: { overallVerbalResponse: { score: 90 }, relevance: { score: 88 }, specificity: { score: 90 }, clarity: { score: 92 } } }),
+      [event("cameraFacing", 0, 85), event("centeredFraming", 0, 85), event("stablePosture", 0, 85)],
+      [],
+    );
+    expect(overallOf(result).score).toBeGreaterThan(85);
+  });
+
   it("withholds the overall score when speech was audible but never transcribed", () => {
     const result = buildCoachingScores(
       { hasAudio: true, hasVideo: true, durationSeconds: 90 },

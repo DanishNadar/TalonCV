@@ -91,6 +91,15 @@ const combine = (parts: Array<{ value: number; weight: number }>) => {
   return total ? parts.reduce((sum, part) => sum + part.value * part.weight, 0) / total : 0;
 };
 
+/** A geometric mean is deliberately less forgiving than an arithmetic mean:
+ * one weak core skill cannot be hidden by excellent performance elsewhere. */
+const combinePerformance = (parts: Array<{ value: number; weight: number }>) => {
+  const total = parts.reduce((sum, part) => sum + part.weight, 0);
+  if (!total) return null;
+  if (parts.some((part) => part.value <= 0)) return 0;
+  return Math.exp(parts.reduce((sum, part) => sum + part.weight * Math.log(part.value), 0) / total);
+};
+
 /* ------------------------------------------------------------- thresholds */
 
 // A take shorter than this, or with fewer words than this, cannot support a
@@ -345,16 +354,41 @@ export function buildCoachingScores(
   const scores = { audioRecordingQuality: recordingQuality, vocalDelivery, verbalResponseQuality, visualDelivery, multimodalAlignment };
 
   /* --- Overall ----------------------------------------------------------- */
-  const weights: Record<keyof typeof scores, number> = {
-    audioRecordingQuality: 0.1,
-    vocalDelivery: 0.22,
-    verbalResponseQuality: 0.36,
-    visualDelivery: 0.22,
-    multimodalAlignment: 0.1,
-  };
-  const included = (Object.keys(scores) as Array<keyof typeof scores>).filter((key) => scores[key].score !== null);
-  const totalWeight = included.reduce((sum, key) => sum + weights[key], 0);
-  const weighted = included.length ? included.reduce((sum, key) => sum + Number(scores[key].score) * weights[key], 0) / totalWeight : null;
+  // A clean recording and one well-aligned gesture are useful diagnostic
+  // evidence, but neither demonstrates that the candidate answered well. They
+  // stay visible as separate dimensions and never increase the headline score.
+  const headlineWeights = {
+    verbalResponseQuality: 0.6,
+    vocalDelivery: 0.25,
+    visualDelivery: 0.15,
+  } as const;
+  type HeadlineDimension = keyof typeof headlineWeights;
+  const headlineParts: Array<{ key: HeadlineDimension; score: number; weight: number }> = [];
+  for (const key of Object.keys(headlineWeights) as HeadlineDimension[]) {
+    const score = scores[key].score;
+    if (score !== null) headlineParts.push({ key, score, weight: headlineWeights[key] });
+  }
+  const rawPerformanceScore = combinePerformance(headlineParts.map((item) => ({ value: item.score, weight: item.weight })));
+  const answerScore = scores.verbalResponseQuality.score;
+  const relevanceScore = num(rubric.relevance?.score);
+  let performanceCap = 100;
+  const capReasons: string[] = [];
+
+  if (answerScore !== null && answerScore < 45) {
+    performanceCap = Math.min(performanceCap, 48);
+    capReasons.push("Answer quality was below 45, so delivery evidence could not raise the overall score above 48.");
+  } else if (answerScore !== null && answerScore < 55) {
+    performanceCap = Math.min(performanceCap, 58);
+    capReasons.push("Answer quality was below 55, so delivery evidence could not raise the overall score above 58.");
+  }
+  if (relevanceScore !== null && relevanceScore < 30) {
+    performanceCap = Math.min(performanceCap, 45);
+    capReasons.push("The answer had very low question relevance, so the overall score was capped at 45.");
+  } else if (relevanceScore !== null && relevanceScore < 45) {
+    performanceCap = Math.min(performanceCap, 55);
+    capReasons.push("The answer only weakly addressed the question, so the overall score was capped at 55.");
+  }
+  const performanceScore = rawPerformanceScore === null ? null : Math.min(rawPerformanceScore, performanceCap);
 
   // An overall number is only meaningful with enough recording and enough
   // speech behind it. Below that the dimensions are still reported, but the
@@ -370,13 +404,15 @@ export function buildCoachingScores(
   // never examined.
   const transcriptionBroken = transcriptMissingButSpoke;
   const tooFewWords = spokeAudibly && wordCount < minimumWords;
-  const insufficient = tooShort || transcriptionBroken || tooFewWords || transcriptUnreliable;
+  const answerAnalysisUnavailable = spokeAudibly && answerScore === null;
+  const insufficient = tooShort || transcriptionBroken || tooFewWords || transcriptUnreliable || answerAnalysisUnavailable;
 
   const reasons = [
     ...(tooShort ? [`The recording is ${duration.toFixed(1)}s; at least ${minimumSeconds}s is needed for an overall score.`] : []),
     ...(transcriptionBroken ? ["Transcription did not complete, so the largest scoring component is missing."] : []),
     ...(tooFewWords ? [`Only ${wordCount} transcript words were available; at least ${minimumWords} are needed to judge answer content fairly.`] : []),
     ...(transcriptUnreliable ? ["The transcript was dominated by repeated short sounds, so answer-content scoring was withheld."] : []),
+    ...(answerAnalysisUnavailable ? ["Answer analysis was unavailable, so delivery evidence alone cannot produce an overall score."] : []),
   ];
 
   const overall =
@@ -388,25 +424,32 @@ export function buildCoachingScores(
           minimumWords,
           transcriptUnreliable,
         })
-      : weighted === null
-        ? unavailable("No usable audio, transcript, or visual evidence was available.")
+      : performanceScore === null
+        ? unavailable("No usable answer, vocal, or visual performance evidence was available.")
         : dimension(
-            weighted,
-            included.length >= 4 && !tooFewWords ? "high" : included.length >= 3 ? "medium" : "limited",
-            included.map((key) => `${key}: ${scores[key].score}`),
+            performanceScore,
+            headlineParts.length >= 3 ? "high" : headlineParts.length >= 2 ? "medium" : "limited",
+            [
+              ...headlineParts.map((item) => `${item.key}: ${item.score}`),
+              "Recording quality and multimodal alignment are reported separately and do not raise the headline score.",
+              ...capReasons,
+            ],
             [],
             [],
-            "Weighted mean of the available dimension scores; unavailable dimensions are excluded and the remaining weights renormalized.",
+            "Geometric mean of answer quality (60%), vocal delivery (25%), and visual delivery (15%). Recording quality and multimodal alignment are diagnostic only; content and relevance ceilings prevent delivery from masking a weak answer.",
             {
               components: Object.fromEntries(
-                included.map((key) => [key, { score: scores[key].score, normalizedWeight: Number((weights[key] / totalWeight).toFixed(4)) }]),
+                headlineParts.map((item) => [item.key, { score: item.score, normalizedWeight: item.weight }]),
               ),
-              excludedComponents: (Object.keys(scores) as Array<keyof typeof scores>).filter((key) => !included.includes(key)),
+              excludedFromHeadline: ["audioRecordingQuality", "multimodalAlignment"],
+              rawPerformanceScore: rawPerformanceScore === null ? null : round(rawPerformanceScore),
+              performanceCap,
+              relevanceScore,
             },
           );
 
   return {
-    analysisVersion: "browser-scores-v3",
+    analysisVersion: "browser-scores-v4",
     scores: { ...scores, overallInterviewPracticeDelivery: overall },
     safetyNote:
       "These are explainable interview-practice coaching scores. They are not hiring scores and do not assess personality, honesty, intelligence, emotion, mental state, protected characteristics, or suitability for employment.",
